@@ -229,6 +229,7 @@ pub fn edge_voice_presets() -> Vec<TtsVoiceInfo> {
         ("zh-TW-HsiaoChenNeural", "曉臻（台湾）"),
         ("zh-TW-HsiaoYuNeural", "曉雨（台湾）"),
         ("zh-HK-HiuMaanNeural", "曉曼（粤语）"),
+        ("ja-JP-NanamiNeural", "七海（日语，日本語）")
     ];
     PRESETS
         .iter()
