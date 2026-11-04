@@ -95,7 +95,7 @@ fn resolve_geodata_dir(configured: &str) -> PathBuf {
 fn install_cjk_fonts(ctx: &egui::Context) {
     const LXGW_WENKAI: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../media/fonts/lxgw-wenkai-v1.522/LXGWWenKai-Regular.ttf"
+        "/../../media/fonts/maple-mono/MapleMono-NF-CN-Regular.ttf"
     ));
 
     let mut fonts = egui::FontDefinitions::default();
