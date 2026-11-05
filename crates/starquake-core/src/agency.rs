@@ -4,35 +4,36 @@
 
 /// Jian `/all` 预警子源（设置页挂在数据源下方；GQ 由 Pancakes 开关负责）。
 pub const EEW_FILTER_FAMILIES: &[AgencyFamily] = &[
-    AgencyFamily::Jma,
     AgencyFamily::Cea,
+    AgencyFamily::CeaPr,
     AgencyFamily::Cwa,
+    AgencyFamily::Jma,
     AgencyFamily::Kma,
     AgencyFamily::Sa,
     AgencyFamily::EarlyEst,
 ];
 
-/// 信息事件震级过滤（Jian `/all` 内各地震速报源，对齐 RhythmQuake）。
+/// 信息事件速报源（顺序对齐 Jian `/all` 出站速报序；宁夏局保留）。
+/// 不含 `Other`（设置页已去掉「未适配机构」）。
 pub const RECORD_FILTER_FAMILIES: &[AgencyFamily] = &[
     AgencyFamily::Cenc,
-    AgencyFamily::Usgs,
-    AgencyFamily::Cwa,
-    AgencyFamily::Jma,
-    AgencyFamily::Hko,
-    AgencyFamily::Emsc,
-    AgencyFamily::Kma,
     AgencyFamily::Ningxia,
     AgencyFamily::Yunnan,
     AgencyFamily::Shanxi,
     AgencyFamily::Beijing,
-    AgencyFamily::Gfz,
-    AgencyFamily::Bcsf,
-    AgencyFamily::Usp,
-    AgencyFamily::Ingv,
+    AgencyFamily::Cwa,
+    AgencyFamily::Jma,
+    AgencyFamily::Hko,
     AgencyFamily::Tmd,
     AgencyFamily::Mmd,
     AgencyFamily::Bmkg,
     AgencyFamily::Geonet,
+    AgencyFamily::Usgs,
+    AgencyFamily::Emsc,
+    AgencyFamily::Gfz,
+    AgencyFamily::Bcsf,
+    AgencyFamily::Ingv,
+    AgencyFamily::Usp,
     AgencyFamily::Afad,
     AgencyFamily::Ipma,
     AgencyFamily::Noa,
@@ -44,6 +45,7 @@ pub const RECORD_FILTER_FAMILIES: &[AgencyFamily] = &[
     AgencyFamily::Knmi,
     AgencyFamily::Ncedc,
     AgencyFamily::Lmu,
+    AgencyFamily::Kma,
     AgencyFamily::Koeri,
     AgencyFamily::Gsras,
     AgencyFamily::Csn,
@@ -52,8 +54,6 @@ pub const RECORD_FILTER_FAMILIES: &[AgencyFamily] = &[
     AgencyFamily::Ga,
     AgencyFamily::Igepn,
     AgencyFamily::Peru,
-    AgencyFamily::Fssn,
-    AgencyFamily::Other,
 ];
 
 /// 地名后追加的机构括号标签，如 `[JMA]`、`[CN]`、`[CENC]`、`[四川地震局]`。
@@ -70,6 +70,7 @@ pub fn agency_bracket(agency: &str) -> String {
     match agency_family(agency) {
         AgencyFamily::Jma => "JMA".into(),
         AgencyFamily::Cea => "CN".into(),
+        AgencyFamily::CeaPr => "省网".into(),
         AgencyFamily::Cenc => "CENC".into(),
         AgencyFamily::Gq => "GQ".into(),
         AgencyFamily::Usgs => "USGS".into(),
@@ -110,7 +111,6 @@ pub fn agency_bracket(agency: &str) -> String {
         AgencyFamily::Ga => "GA".into(),
         AgencyFamily::Igepn => "IGEPN".into(),
         AgencyFamily::Peru => "IGP".into(),
-        AgencyFamily::Fssn => "FSSN".into(),
         AgencyFamily::Other => "其他".into(),
     }
 }
@@ -142,8 +142,10 @@ pub fn cea_pr_agency_id(province: Option<&str>) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AgencyFamily {
     Jma,
-    /// 中国地震预警网（cea / cea-pr），括号标签 `CN`
+    /// 中国地震预警网国网（cea），括号标签 `CN`
     Cea,
+    /// 中国地震预警网省网（cea-pr），括号标签 `省网`
+    CeaPr,
     /// 中国地震台网中心速报（cenc），括号标签 `CENC`
     Cenc,
     /// GlobalQuake（Pancakes gq）
@@ -186,8 +188,6 @@ pub enum AgencyFamily {
     Ga,
     Igepn,
     Peru,
-    /// Fan Studio Seismic Network 地震信息
-    Fssn,
     Other,
 }
 
@@ -196,6 +196,7 @@ impl AgencyFamily {
         match self {
             Self::Jma => "jma",
             Self::Cea => "cea",
+            Self::CeaPr => "cea_pr",
             Self::Cenc => "cenc",
             Self::Gq => "gq",
             Self::Usgs => "usgs",
@@ -236,7 +237,6 @@ impl AgencyFamily {
             Self::Ga => "ga",
             Self::Igepn => "igepn",
             Self::Peru => "peru",
-            Self::Fssn => "fssn",
             Self::Other => "other",
         }
     }
@@ -246,6 +246,7 @@ impl AgencyFamily {
         match self {
             Self::Jma => "JMA",
             Self::Cea => "CN",
+            Self::CeaPr => "省网",
             Self::Cenc => "CENC",
             Self::Gq => "GQ",
             Self::Usgs => "USGS",
@@ -286,21 +287,21 @@ impl AgencyFamily {
             Self::Ga => "GA",
             Self::Igepn => "IGEPN",
             Self::Peru => "IGP",
-            Self::Fssn => "FSSN",
             Self::Other => "其他",
         }
     }
 
     pub fn display_name(self) -> &'static str {
         match self {
-            Self::Jma => "日本气象厅 (JMA) / P2PQuake",
             Self::Cea => "中国地震预警网",
+            Self::CeaPr => "中国地震预警网省网",
+            Self::Jma => "日本气象厅緊急地震速報",
             Self::Cenc => "中国地震台网 (CENC)",
             Self::Gq => "GlobalQuake 全球预警",
             Self::Usgs => "美国地质调查局 (USGS)",
-            Self::Cwa => "中央气象署 (CWA)",
-            Self::Kma => "韩国气象厅 (KMA)",
-            Self::EarlyEst => "INGV Early-est 快速定位",
+            Self::Cwa => "台湾中央气象署预警",
+            Self::Kma => "韩国气象厅预警",
+            Self::EarlyEst => "Early-est快速定位系统",
             Self::Ningxia => "宁夏地震局",
             Self::Yunnan => "云南地震局",
             Self::Shanxi => "山西地震局",
@@ -335,7 +336,6 @@ impl AgencyFamily {
             Self::Ga => "澳大利亚地质局",
             Self::Igepn => "厄瓜多尔地球物理研究所",
             Self::Peru => "秘鲁地球物理研究所",
-            Self::Fssn => "Fan Studio 地震信息 (FSSN)",
             Self::Other => "未适配机构",
         }
     }
@@ -401,12 +401,20 @@ pub fn agency_family(agency: &str) -> AgencyFamily {
     {
         return AgencyFamily::Cenc;
     }
-    // CEA 预警（含省级 cea-pr；Wolfx cenc_eew → wolfx-cea，省级 → wolfx-cea-pr:省）
+    // 省网 cea-pr（须先于国网 cea 判定）
+    if a == "cea-pr"
+        || a.starts_with("cea-pr:")
+        || a.starts_with("cea-pr/")
+        || a.contains("wolfx-cea-pr")
+        || a.contains("cea-pr")
+    {
+        return AgencyFamily::CeaPr;
+    }
+    // 国网 CEA 预警（Wolfx cenc_eew → wolfx-cea）
     if a == "cea"
         || a == "wolfx-cea"
         || a.starts_with("cea-")
         || a.starts_with("wolfx-cea")
-        || a.contains("cea-pr")
         || a.contains("cea/")
     {
         return AgencyFamily::Cea;
@@ -495,9 +503,6 @@ pub fn agency_family(agency: &str) -> AgencyFamily {
     if a == "peru" || a.contains("igp") {
         return AgencyFamily::Peru;
     }
-    if a.contains("fssn") {
-        return AgencyFamily::Fssn;
-    }
     AgencyFamily::Other
 }
 
@@ -537,7 +542,7 @@ mod tests {
     fn cea_pr_maps_to_province_bureau() {
         assert_eq!(agency_bracket("cea-pr:四川"), "四川地震局");
         assert_eq!(agency_bracket("cea-pr"), "地方地震局");
-        assert_eq!(agency_family("cea-pr:云南"), AgencyFamily::Cea);
+        assert_eq!(agency_family("cea-pr:云南"), AgencyFamily::CeaPr);
         assert_eq!(
             place_with_agency("阿坝州红原县", "cea-pr:四川"),
             "阿坝州红原县 [四川地震局]"
@@ -546,8 +551,10 @@ mod tests {
         assert_eq!(agency_family("wolfx-cea"), AgencyFamily::Cea);
         assert_eq!(agency_bracket("wolfx-cea"), "CN");
         assert_eq!(agency_bracket("wolfx-cea-pr:四川"), "四川地震局");
-        assert_eq!(agency_family("wolfx-cea-pr:福建"), AgencyFamily::Cea);
+        assert_eq!(agency_family("wolfx-cea-pr:福建"), AgencyFamily::CeaPr);
         assert_eq!(agency_family("wolfx-cwa-eew"), AgencyFamily::Cwa);
+        assert_eq!(AgencyFamily::CeaPr.bracket_label(), "省网");
+        assert_eq!(AgencyFamily::Jma.display_name(), "日本气象厅緊急地震速報");
     }
 
     #[test]

@@ -141,24 +141,24 @@ pub struct UiConfig {
     /// 地图右上气象悬浮卡片（不再地图打点）
     #[serde(default = "default_true")]
     pub show_weather: bool,
-    /// 本地测站到时震源推算（不含检知；需足够触发站）
-    #[serde(default = "default_true")]
+    /// 本地测站到时震源推算（功能开发中；设置页禁用，强制关闭）
+    #[serde(default = "default_false")]
     pub show_local_hypo: bool,
+    /// 预警预估烈度/震度分布（行政区填色 / JMA warnArea；示意）
+    #[serde(default = "default_true")]
+    pub show_intensity_map: bool,
     /// 气象侧栏展示：`list` 列表 / `card` 地图悬浮卡片
     #[serde(default = "default_weather_display_mode")]
     pub weather_display_mode: String,
     /// 气象预警地名筛选（侧栏输入，空为不过滤）
     #[serde(default)]
     pub weather_location_filter: String,
-    /// 已下线：烈度速报不再侧栏/地图展示；保留字段兼容旧 settings.json
+    /// 兼容旧 settings.json；地图绘制现由 `sources.cenc_int.enabled` 控制
     #[serde(default = "default_false")]
     pub show_cenc_int: bool,
     /// 地图绘制台风路径 / 风圈 / 预报
     #[serde(default = "default_true")]
     pub show_typhoons: bool,
-    /// 地图绘制活动断层（全球 GEM + 中国 CAFD）
-    #[serde(default = "default_false")]
-    pub show_faults: bool,
     /// 全球晨昏线与夜侧遮罩
     #[serde(default = "default_false")]
     pub show_terminator: bool,
@@ -525,9 +525,6 @@ pub struct SourcesConfig {
     pub jian: JianSourceConfig,
     pub wolfx: WolfxSourceConfig,
     pub p2pquake: P2pSourceConfig,
-    /// FSSN 地震信息（Fan Studio Seismic Network）
-    #[serde(default)]
-    pub fssn: FssnSourceConfig,
     /// PancakesAPI（api.aloys23.link）全灾害源
     #[serde(default)]
     pub pancakes: PancakesSourceConfig,
@@ -789,6 +786,9 @@ pub struct JianSourceConfig {
     pub jma_eew: bool,
     #[serde(default = "default_true")]
     pub cea_eew: bool,
+    /// 省网 cea-pr（与国网 cea 分开开关）
+    #[serde(default = "default_true")]
+    pub cea_pr_eew: bool,
     #[serde(default = "default_true")]
     pub cwa_eew: bool,
     #[serde(default = "default_true")]
@@ -885,11 +885,12 @@ impl WolfxSourceConfig {
 /// 速报过滤：源开关与震级阈值分离。
 ///
 /// - `record_enabled`：各机构速报开关（关则整源丢弃）
-/// - `record_mag`：`0` 不过滤；`>0` 最低震级。白名单可绕过震级，不能绕过关闭的源。
-/// - 兼容旧配置：`record_mag = -1` 视为该源关闭，并按 `0` 读阈值。
+/// - `record_mag`：`0` 不过滤；`>0` 最低震级
+/// - 兼容旧配置：`record_mag = -1` 视为该源关闭，并按 `0` 读阈值
+/// - `place_whitelist`：保留字段兼容旧配置，设置页已不再展示
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FiltersConfig {
-    /// 各机构速报开关；缺省：`other` 关，其余开
+    /// 各机构速报开关；缺省仅开 cenc / 省局 / cwa / jma / kma / hko
     #[serde(default)]
     pub record_enabled: HashMap<String, bool>,
     #[serde(default)]
@@ -900,6 +901,7 @@ pub struct FiltersConfig {
 
 impl FiltersConfig {
     /// 该机构速报是否接收（与震级阈值无关）。
+    /// 缺省仅开：cenc / 省局(云贵陕京宁) / cwa / jma / kma / hko。
     pub fn record_source_enabled(&self, key: &str) -> bool {
         if let Some(on) = self.record_enabled.get(key) {
             return *on;
@@ -908,7 +910,18 @@ impl FiltersConfig {
         if self.record_mag.get(key).copied().unwrap_or(0.0) < 0.0 {
             return false;
         }
-        key != "other"
+        matches!(
+            key,
+            "cenc"
+                | "yunnan"
+                | "shanxi"
+                | "beijing"
+                | "ningxia"
+                | "cwa"
+                | "jma"
+                | "kma"
+                | "hko"
+        )
     }
 
     pub fn set_record_source_enabled(&mut self, key: &str, on: bool) {
@@ -950,24 +963,6 @@ impl FiltersConfig {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .any(|kw| place.contains(kw))
-    }
-}
-
-/// FSSN 地震信息 WebSocket（`/fssn`）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FssnSourceConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default = "default_fssn_ws")]
-    pub ws_url: String,
-}
-
-impl Default for FssnSourceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            ws_url: default_fssn_ws(),
-        }
     }
 }
 
@@ -1025,9 +1020,6 @@ fn default_p2p_ws() -> String {
 }
 fn default_p2p_poll() -> f64 {
     1.5
-}
-fn default_fssn_ws() -> String {
-    "wss://fssn-api.fanstudio.tech/fssn".into()
 }
 fn default_pancakes_base() -> String {
     "https://api.aloys23.link".into()
@@ -1132,12 +1124,12 @@ impl Default for AppConfig {
                 show_legend: true,
                 show_volcanoes: true,
                 show_weather: true,
-                show_local_hypo: true,
+                show_local_hypo: false,
+                show_intensity_map: true,
                 weather_display_mode: default_weather_display_mode(),
                 weather_location_filter: String::new(),
                 show_cenc_int: false,
                 show_typhoons: true,
-                show_faults: false,
                 show_terminator: false,
                 typhoon_forecast_agency: default_typhoon_forecast_agency(),
             },
@@ -1190,6 +1182,7 @@ impl Default for AppConfig {
                     record_enabled: true,
                     jma_eew: true,
                     cea_eew: true,
+                    cea_pr_eew: true,
                     cwa_eew: true,
                     kma_eew: true,
                     sa_eew: true,
@@ -1224,7 +1217,6 @@ impl Default for AppConfig {
                     ws_url: default_p2p_ws(),
                     poll_secs: default_p2p_poll(),
                 },
-                fssn: FssnSourceConfig::default(),
                 pancakes: PancakesSourceConfig::default(),
                 stations: StationsConfig::default(),
                 typhoon: TyphoonSourceConfig::default(),
@@ -1707,7 +1699,6 @@ impl AppConfig {
             || (self.sources.wolfx.enabled
                 && (self.sources.wolfx.any_eew() || self.sources.wolfx.any_eqlist()))
             || self.sources.p2pquake.enabled
-            || self.sources.fssn.enabled
             || self.sources.pancakes.enabled
             || self.sources.typhoon.enabled
     }
@@ -1718,6 +1709,7 @@ impl AppConfig {
             && self.sources.jian.record_enabled == other.sources.jian.record_enabled
             && self.sources.jian.jma_eew == other.sources.jian.jma_eew
             && self.sources.jian.cea_eew == other.sources.jian.cea_eew
+            && self.sources.jian.cea_pr_eew == other.sources.jian.cea_pr_eew
             && self.sources.jian.cwa_eew == other.sources.jian.cwa_eew
             && self.sources.jian.kma_eew == other.sources.jian.kma_eew
             && self.sources.jian.sa_eew == other.sources.jian.sa_eew
@@ -1753,8 +1745,6 @@ impl AppConfig {
             && self.sources.p2pquake.http_history == other.sources.p2pquake.http_history
             && self.sources.p2pquake.ws_url == other.sources.p2pquake.ws_url
             && self.sources.p2pquake.poll_secs == other.sources.p2pquake.poll_secs
-            && self.sources.fssn.enabled == other.sources.fssn.enabled
-            && self.sources.fssn.ws_url == other.sources.fssn.ws_url
             && self.sources.pancakes.enabled == other.sources.pancakes.enabled
             && self.sources.pancakes.base_url == other.sources.pancakes.base_url
             && self.sources.pancakes.ws_url == other.sources.pancakes.ws_url

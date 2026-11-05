@@ -18,8 +18,8 @@ pub use tts::{
     agency_tts_name, build_eew_tts_script, build_record_tts_script, should_play_eew_tts,
 };
 pub use estimate::{
-    calc_csis, calc_jma_instrumental, estimate_at_site, estimate_epicentral, fill_intensity,
-    hypocentral_km, intensity_radius_km, intensity_rings,
+    calc_csis, calc_csis_kanameishi, calc_jma_instrumental, estimate_at_site, estimate_epicentral,
+    fill_intensity, hypocentral_km, intensity_radius_km, intensity_rings,
 };
 pub use intensity::{
     cn_intensity_display_unknown, cn_intensity_level, cn_intensity_text,
@@ -43,6 +43,21 @@ pub struct AgencyId(pub String);
 pub enum IntensityKind {
     JmaShindo,
     CnIntensity,
+}
+
+/// JMA EEW 预测区域（`warnArea` 条目）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EewWarnArea {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub code: String,
+    /// 预测震度下限文案（如 `3` / `5弱`）
+    #[serde(default)]
+    pub intensity_from: String,
+    /// 预测震度上限文案
+    #[serde(default)]
+    pub intensity_to: String,
 }
 
 /// 单次预警报文（归一化后）
@@ -76,6 +91,9 @@ pub struct EewReport {
     /// 收到最终报的本地时刻 unix ms（0=尚未最终）
     #[serde(default)]
     pub final_at_ms: i64,
+    /// JMA `warnArea`；空则不画烈度分布。其它源可为空。
+    #[serde(default)]
+    pub warn_areas: Vec<EewWarnArea>,
 }
 
 /// JMA：`depth=0` 与「极浅」/「ごく浅い」同义；展示为「极浅」，不写成 `0km`。
@@ -197,6 +215,7 @@ impl EqRecord {
             is_assumption: self.hypocenter_unknown || self.magnitude_unknown,
             is_warn: false,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         }
     }
 }
@@ -783,6 +802,7 @@ impl StationSample {
             is_assumption: false,
             is_warn: false,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         }
     }
 }
@@ -860,7 +880,6 @@ pub struct AppSnapshot {
     pub health_wolfx: HealthStatus,
     pub health_p2p: HealthStatus,
     pub health_pancakes: HealthStatus,
-    pub health_fssn: HealthStatus,
     pub health_weather: HealthStatus,
     pub health_cenc_int: HealthStatus,
     pub tab: SidebarTab,
@@ -923,6 +942,7 @@ impl AppSnapshot {
             is_assumption: false,
             is_warn: true,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         };
         let eew_b = EewReport {
             agency: AgencyId("cea".into()),
@@ -942,6 +962,7 @@ impl AppSnapshot {
             is_assumption: false,
             is_warn: false,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         };
         let eew_pr = EewReport {
             agency: AgencyId("cea-pr:四川".into()),
@@ -961,6 +982,7 @@ impl AppSnapshot {
             is_assumption: false,
             is_warn: false,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         };
         let eew_c = EewReport {
             agency: AgencyId("jma-eew".into()),
@@ -980,6 +1002,7 @@ impl AppSnapshot {
             is_assumption: false,
             is_warn: true,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         };
 
         Self {
@@ -1076,7 +1099,6 @@ impl AppSnapshot {
             health_wolfx: HealthStatus::Normal,
             health_p2p: HealthStatus::Fluctuating,
             health_pancakes: HealthStatus::Abnormal,
-            health_fssn: HealthStatus::Abnormal,
             health_weather: HealthStatus::Normal,
             health_cenc_int: HealthStatus::Normal,
             tab: SidebarTab::Eew,
@@ -1173,7 +1195,6 @@ impl AppSnapshot {
             health_wolfx: HealthStatus::Abnormal,
             health_p2p: HealthStatus::Abnormal,
             health_pancakes: HealthStatus::Abnormal,
-            health_fssn: HealthStatus::Abnormal,
             health_weather: HealthStatus::Abnormal,
             health_cenc_int: HealthStatus::Abnormal,
             tab: SidebarTab::Eew,
@@ -1305,7 +1326,6 @@ impl AppSnapshot {
             "wolfx" => self.health_wolfx = status,
             "p2pquake" | "p2p" => self.health_p2p = status,
             "pancakes" => self.health_pancakes = status,
-            "fssn" => self.health_fssn = status,
             "weather" => self.health_weather = status,
             "cenc_int" | "cenc-int" => self.health_cenc_int = status,
             _ => {}
@@ -2248,6 +2268,7 @@ mod eew_dedup_tests {
             is_assumption: false,
             is_warn: false,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         }
     }
 

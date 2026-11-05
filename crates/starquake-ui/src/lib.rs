@@ -26,8 +26,9 @@ use starquake_core::{
 use weather_icons::WeatherIconCache;
 use starquake_core::palette::{cn_intensity_rgb, jma_shindo_rgb};
 use starquake_map::{
-    radius_km_screen_px, zoom_to_fit_radius_for_mode, zoom_to_fit_radius_km, BasemapLoadState, BasemapMode, MapUiResult, MapViewport,
-    ProjectionMode, TyphoonHoverHit, VectorStyle, OCEAN,
+    fit_events, radius_km_screen_px, zoom_to_fit_radius_for_mode, zoom_to_fit_radius_km,
+    BasemapLoadState, BasemapMode, MapUiResult, MapViewport, ProjectionMode, TyphoonHoverHit,
+    VectorStyle, OCEAN,
 };
 use starquake_travel::{max_s_wave_spread_km, s_wave_still_spreading_to, TravelEngine, Wave};
 use std::collections::HashMap;
@@ -118,6 +119,8 @@ pub struct MainShell {
     weather_card_index: usize,
     /// 气象卡片上次自动轮播时刻
     weather_card_rotated_at: Option<std::time::Instant>,
+    /// 已跟焦过的 NowQuake 烈度速报 eq_id（同事件热更新不重复跳）
+    cenc_int_focused_eq_id: String,
 }
 
 impl Default for MainShell {
@@ -142,6 +145,7 @@ impl Default for MainShell {
             sidebar_float_geom_applied: false,
             weather_card_index: 0,
             weather_card_rotated_at: None,
+            cenc_int_focused_eq_id: String::new(),
         }
     }
 }
@@ -157,11 +161,10 @@ impl MainShell {
         lat: f64,
         zoom: f64,
         projection: ProjectionMode,
-        show_faults: bool,
     ) {
         self.map.set_projection_mode(projection);
         self.map
-            .configure(basemap, tile_base, tile_source, geodata_dir, show_faults);
+            .configure(basemap, tile_base, tile_source, geodata_dir);
         self.map.center_lon = lon;
         self.map.center_lat = lat;
         self.map.zoom = zoom;
@@ -178,14 +181,13 @@ impl MainShell {
         tile_source: impl Into<String>,
         geodata_dir: Option<&Path>,
         projection: ProjectionMode,
-        show_faults: bool,
     ) {
         let lon = self.map.center_lon;
         let lat = self.map.center_lat;
         let zoom = self.map.zoom;
         self.map.set_projection_mode(projection);
         self.map
-            .configure(basemap, tile_base, tile_source, geodata_dir, show_faults);
+            .configure(basemap, tile_base, tile_source, geodata_dir);
         self.map.center_lon = lon;
         self.map.center_lat = lat;
         self.map.zoom = zoom;
@@ -272,7 +274,6 @@ impl MainShell {
             cfg.sources.wolfx.enabled,
             cfg.sources.p2pquake.enabled,
             cfg.sources.pancakes.enabled,
-            cfg.sources.fssn.enabled,
         ];
         let show_volcanoes = cfg.ui.show_volcanoes;
 
@@ -673,6 +674,38 @@ impl MainShell {
                         starquake_map::request_repaint_after_capped(ctx, follow_ms);
                     }
                 }
+                // NowQuake 烈度速报：仅最新一条画在地图上（对齐 eewcn，不走侧栏列表）
+                let cenc_for_map = if cfg.sources.cenc_int.enabled {
+                    snap.cenc_int.first()
+                } else {
+                    None
+                };
+                if paint_map {
+                    if let Some(ev) = cenc_for_map {
+                        if !ev.eq_id.is_empty()
+                            && ev.eq_id != self.cenc_int_focused_eq_id
+                            && !self.map.is_flying()
+                            && !self.map.user_camera_override
+                        {
+                            let mut pts: Vec<(f64, f64, f64)> = Vec::new();
+                            if ev.latitude.abs() > 0.01 || ev.longitude.abs() > 0.01 {
+                                pts.push((ev.longitude, ev.latitude, 25.0));
+                            }
+                            for s in &ev.stations {
+                                pts.push((s.longitude, s.latitude, 8.0));
+                            }
+                            if let Some((lon, lat, z)) =
+                                fit_events(&pts, map_rect.width(), map_rect.height())
+                            {
+                                let z = z.clamp(5.0, 8.0);
+                                self.map.fly_to_centered(lon, lat, Some(z), 0.85);
+                                self.cenc_int_focused_eq_id = ev.eq_id.clone();
+                            }
+                        }
+                    } else if !self.cenc_int_focused_eq_id.is_empty() {
+                        self.cenc_int_focused_eq_id.clear();
+                    }
+                }
                 if !paint_map {
                     let _ = ui.allocate_painter(ui.available_size(), egui::Sense::hover());
                 } else {
@@ -696,7 +729,7 @@ impl MainShell {
                     } else {
                         None
                     },
-                    None,
+                    cenc_for_map,
                     if show_typhoons_map {
                         snap.typhoons.as_slice()
                     } else {
@@ -707,9 +740,9 @@ impl MainShell {
                     snap.tsunami.as_ref(),
                     &radars,
                     snap.precip.as_ref(),
-                    cfg.ui.show_faults,
                     cfg.sources.map_wx.radar_opacity,
                     cfg.sources.map_wx.precip_opacity,
+                    cfg.ui.show_intensity_map,
                 );
                 }
                 // 预警条/海啸/右上测站台风/图例/时钟：相对 1280x720 等比，上限 1.0
@@ -1073,14 +1106,12 @@ impl MainShell {
             wolfx: snap.health_wolfx,
             p2p: snap.health_p2p,
             pancakes: snap.health_pancakes,
-            fssn: snap.health_fssn,
             weather: snap.health_weather,
             cenc_int: snap.health_cenc_int,
             jian_enabled: cfg.sources.jian.enabled,
             wolfx_enabled: cfg.sources.wolfx.enabled,
             p2p_enabled: cfg.sources.p2pquake.enabled,
             pancakes_enabled: cfg.sources.pancakes.enabled,
-            fssn_enabled: cfg.sources.fssn.enabled,
             weather_enabled: cfg.sources.weather.enabled,
             cenc_int_enabled: cfg.sources.cenc_int.enabled,
         };
@@ -2586,7 +2617,7 @@ fn draw_sidebar(
     icons: &IntensityIcons,
     weather_icons: &mut WeatherIconCache,
     show_volcano_icons: bool,
-    source_enabled: [bool; 5],
+    source_enabled: [bool; 4],
     detached: bool,
     ui_zoom: f32,
     weather_display_mode: &mut String,
@@ -2731,7 +2762,6 @@ fn draw_sidebar(
                     ("Wolfx", snap.health_wolfx),
                     ("P2P", snap.health_p2p),
                     ("Pancakes", snap.health_pancakes),
-                    ("FSSN", snap.health_fssn),
                 ]
                 .into_iter()
                 .enumerate()
@@ -2780,7 +2810,7 @@ fn draw_sidebar(
                 .show(ui, |ui| {
                     let content_w = ui.available_width().min(ui.clip_rect().width()).max(1.0);
                     ui.set_max_width(content_w);
-                    // 避免首条地名/[FSSN] 顶被标签栏裁切
+                    // 避免首条地名/机构标签顶被标签栏裁切
                     ui.add_space(4.0 * z);
                     match tab {
                             SidebarTab::Records => {

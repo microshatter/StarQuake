@@ -16,6 +16,7 @@ pub fn agency_tts_name(agency: &str, is_eew: bool, is_warn: bool) -> String {
     }
     match agency_family(agency) {
         AgencyFamily::Cea => "中国预警网".into(),
+        AgencyFamily::CeaPr => "中国预警网省网".into(),
         AgencyFamily::Jma if is_eew => {
             if is_warn {
                 "日本气象厅警报".into()
@@ -64,7 +65,6 @@ pub fn agency_tts_name(agency: &str, is_eew: bool, is_warn: bool) -> String {
         AgencyFamily::Igepn => "厄瓜多尔国家地球物理研究所".into(),
         AgencyFamily::Peru => "秘鲁地震物理研究所".into(),
         AgencyFamily::Mmd => "马来西亚气象局".into(),
-        AgencyFamily::Fssn => "Fan Studio地震信息".into(),
         AgencyFamily::Other => "地震情报".into(),
     }
 }
@@ -301,6 +301,7 @@ mod tests {
             is_assumption: false,
             is_warn: false,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         };
         assert!(!should_play_eew_tts(Some(&ev), &ev));
         let mut place_jitter = ev.clone();
@@ -334,6 +335,7 @@ mod tests {
             is_assumption: false,
             is_warn: false,
             final_at_ms: 0,
+            warn_areas: Vec::new(),
         };
         let s = build_eew_tts_script(&ev);
         assert!(s.contains("日本气象厅预报"));

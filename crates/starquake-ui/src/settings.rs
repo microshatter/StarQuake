@@ -275,14 +275,12 @@ pub struct SourceHealthView {
     pub wolfx: HealthStatus,
     pub p2p: HealthStatus,
     pub pancakes: HealthStatus,
-    pub fssn: HealthStatus,
     pub weather: HealthStatus,
     pub cenc_int: HealthStatus,
     pub jian_enabled: bool,
     pub wolfx_enabled: bool,
     pub p2p_enabled: bool,
     pub pancakes_enabled: bool,
-    pub fssn_enabled: bool,
     pub weather_enabled: bool,
     pub cenc_int_enabled: bool,
 }
@@ -319,6 +317,8 @@ pub struct SettingsSession {
     edge_tts_voices: Vec<(String, String)>,
     /// 官方通知列表（主循环每帧同步）
     pub official_notices: Vec<OfficialNoticeView>,
+    /// 「功能开发中」提示（墙钟截止时刻）
+    hypo_dev_toast_until: Option<std::time::Instant>,
 }
 
 impl Default for SettingsSession {
@@ -343,6 +343,7 @@ impl Default for SettingsSession {
             offline_tts_voices: Vec::new(),
             edge_tts_voices: Vec::new(),
             official_notices: Vec::new(),
+            hypo_dev_toast_until: None,
         }
     }
 }
@@ -1176,6 +1177,7 @@ fn draw_content(
     let offline_tts_voices = session.offline_tts_voices.clone();
     let edge_tts_voices = session.edge_tts_voices.clone();
     let official_notices = session.official_notices.clone();
+    let mut hypo_dev_toast_until = session.hypo_dev_toast_until.take();
     {
         let draft = session.draft.as_mut().unwrap();
         let login_key = &mut session.login_key;
@@ -1193,6 +1195,7 @@ fn draw_content(
                     &mut capture_view,
                     &mut perf_diag,
                     ip_locate_busy,
+                    &mut hypo_dev_toast_until,
                 ) {
                     *do_ip_locate = true;
                 }
@@ -1214,6 +1217,7 @@ fn draw_content(
     session.map_pick = map_pick;
     session.capture_view = capture_view;
     session.perf_diag = perf_diag;
+    session.hypo_dev_toast_until = hypo_dev_toast_until;
 }
 
 pub(super) fn section(ui: &mut Ui, title: &str, glyph: &str, add: impl FnOnce(&mut Ui)) {
@@ -1404,6 +1408,32 @@ pub(super) fn toggle(ui: &mut Ui, on: &mut bool) -> egui::Response {
     resp
 }
 
+/// 外观同关闭态开关；点击返回 true（不改变状态，供弹出「开发中」）。
+fn disabled_toggle(ui: &mut Ui) -> bool {
+    let size = Vec2::new(46.0, 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    ui.painter().rect_filled(rect, 14.0, chrome().ghost_bg);
+    ui.painter().circle_filled(
+        Pos2::new(rect.left() + 14.0, rect.center().y),
+        10.0,
+        Color32::from_rgba_unmultiplied(
+            chrome().text70.r(),
+            chrome().text70.g(),
+            chrome().text70.b(),
+            140,
+        ),
+    );
+    if resp.hovered() {
+        ui.painter().rect_stroke(
+            rect,
+            14.0,
+            Stroke::new(1.0_f32, chrome().border),
+            egui::StrokeKind::Outside,
+        );
+    }
+    resp.clicked()
+}
+
 pub(super) fn framed_edit(ui: &mut Ui, text: &mut String, width: f32) {
     Frame::NONE
         .fill(chrome().field)
@@ -1436,12 +1466,6 @@ fn draw_sources(
         status_row(ui, "P2PQuake", health.p2p, health.p2p_enabled);
         row_divider(ui);
         status_row(ui, "PancakesAPI", health.pancakes, health.pancakes_enabled);
-        row_divider(ui);
-        status_row(ui, "FSSN", health.fssn, health.fssn_enabled);
-        row_divider(ui);
-        status_row(ui, "气象预警", health.weather, health.weather_enabled);
-        row_divider(ui);
-        status_row(ui, "烈度速报", health.cenc_int, health.cenc_int_enabled);
     });
 
     section(ui, "Jian Project", "\u{25ce}", |ui| {
@@ -1485,15 +1509,6 @@ fn draw_sources(
                     });
             },
         );
-        for fam in starquake_core::EEW_FILTER_FAMILIES {
-            row_divider(ui);
-            let mut on = jian_eew_flag(draft, *fam);
-            let sub = format!("[{}]", fam.bracket_label());
-            control_row(ui, fam.display_name(), &sub, "\u{25ce}", |ui| {
-                toggle(ui, &mut on);
-            });
-            set_jian_eew_flag(draft, *fam, on);
-        }
         row_divider(ui);
         control_field_below(
             ui,
@@ -1501,18 +1516,17 @@ fn draw_sources(
             "换取长期 Token rt_ 并写入用户配置",
             "\u{25ce}",
             |ui| {
-                let w = (ui.available_width() - 8.0).clamp(200.0, 420.0);
+                let btn_w = 72.0_f32;
+                let gap = 8.0_f32;
+                let w = (ui.available_width() - btn_w - gap - 8.0).clamp(160.0, 360.0);
                 framed_edit(ui, login_key, w);
+                ui.add_space(gap);
+                let label = if auth_busy { "登录中…" } else { "登录" };
+                if glass_btn(ui, label, true).clicked() && !auth_busy {
+                    exchange = true;
+                }
             },
         );
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.add_space(44.0);
-            let label = if auth_busy { "换票中…" } else { "换票并保存" };
-            if glass_btn(ui, label, true).clicked() && !auth_busy {
-                exchange = true;
-            }
-        });
         ui.add_space(6.0);
         if let Some(rt) = draft.sources.jian.refresh_token.as_deref() {
             let short = if rt.len() > 12 {
@@ -1548,6 +1562,29 @@ fn draw_sources(
             );
         }
         ui.add_space(10.0);
+        control_row(
+            ui,
+            "启用气象预警",
+            "Jian /weather 中央台预警",
+            "\u{26a1}",
+            |ui| {
+                toggle(ui, &mut draft.sources.weather.enabled);
+            },
+        );
+        for fam in starquake_core::EEW_FILTER_FAMILIES {
+            row_divider(ui);
+            let mut on = jian_eew_flag(draft, *fam);
+            let sub = if matches!(fam, starquake_core::AgencyFamily::Sa) {
+                "[SA][USGS]".to_string()
+            } else {
+                format!("[{}]", fam.bracket_label())
+            };
+            control_row(ui, fam.display_name(), &sub, "\u{25ce}", |ui| {
+                toggle(ui, &mut on);
+            });
+            set_jian_eew_flag(draft, *fam, on);
+        }
+        ui.add_space(10.0);
         ui.label(
             RichText::new(t("速报（信息事件）源开关"))
                 .strong()
@@ -1557,8 +1594,6 @@ fn draw_sources(
         ui.add_space(6.0);
         filters_ui::draw_record_source_switches(ui, draft);
     });
-
-    filters_ui::draw_record_mag_filters(ui, draft);
 
     section(ui, "Wolfx", "\u{25ce}", |ui| {
         control_row(ui, "启用 Wolfx", "连接 Wolfx 通道", "\u{26a1}", |ui| {
@@ -1595,12 +1630,6 @@ fn draw_sources(
         row_divider(ui);
         control_row(ui, "JMA 速报", "jma_eqlist", "\u{25ce}", |ui| {
             toggle(ui, &mut draft.sources.wolfx.jma_eqlist);
-        });
-    });
-
-    section(ui, "FSSN", "\u{25ce}", |ui| {
-        control_row(ui, "启用 FSSN", "Fan Studio 地震信息", "\u{26a1}", |ui| {
-            toggle(ui, &mut draft.sources.fssn.enabled);
         });
     });
 
@@ -1662,18 +1691,6 @@ fn draw_sources(
                 );
             });
         }
-    });
-
-    section(ui, "气象预警", "\u{25ce}", |ui| {
-        control_row(
-            ui,
-            "启用气象预警",
-            "Jian /weather 中央台预警（需 at_/rt_）",
-            "\u{26a1}",
-            |ui| {
-                toggle(ui, &mut draft.sources.weather.enabled);
-            },
-        );
     });
 
     section(ui, "烈度速报", "\u{25ce}", |ui| {
@@ -1756,6 +1773,7 @@ fn jian_eew_flag(draft: &AppConfig, fam: starquake_core::AgencyFamily) -> bool {
     match fam {
         AgencyFamily::Jma => draft.sources.jian.jma_eew,
         AgencyFamily::Cea => draft.sources.jian.cea_eew,
+        AgencyFamily::CeaPr => draft.sources.jian.cea_pr_eew,
         AgencyFamily::Cwa => draft.sources.jian.cwa_eew,
         AgencyFamily::Kma => draft.sources.jian.kma_eew,
         AgencyFamily::Sa => draft.sources.jian.sa_eew,
@@ -1769,6 +1787,7 @@ fn set_jian_eew_flag(draft: &mut AppConfig, fam: starquake_core::AgencyFamily, o
     match fam {
         AgencyFamily::Jma => draft.sources.jian.jma_eew = on,
         AgencyFamily::Cea => draft.sources.jian.cea_eew = on,
+        AgencyFamily::CeaPr => draft.sources.jian.cea_pr_eew = on,
         AgencyFamily::Cwa => draft.sources.jian.cwa_eew = on,
         AgencyFamily::Kma => draft.sources.jian.kma_eew = on,
         AgencyFamily::Sa => draft.sources.jian.sa_eew = on,
@@ -2116,6 +2135,7 @@ fn draw_general(
     capture_view: &mut bool,
     perf_diag: &mut Option<String>,
     ip_locate_busy: bool,
+    hypo_dev_toast_until: &mut Option<std::time::Instant>,
 ) -> bool {
     let mut want_ip = false;
     section(ui, "外观", "\u{25d0}", |ui| {
@@ -2245,11 +2265,34 @@ fn draw_general(
             toggle(ui, &mut draft.ui.show_weather);
         });
         row_divider(ui);
-        
-        control_row(ui, "本地震源推算", "用测站到时推算震源（紫色叉；非官方预警）", "\u{25ce}", |ui| {
-            toggle(ui, &mut draft.ui.show_local_hypo);
+        control_row(ui, "烈度分布图", "CEA/省网/CWA 按行政区填色；JMA 仅在有 warnArea 时绘制（示意）", "\u{25ce}", |ui| {
+            toggle(ui, &mut draft.ui.show_intensity_map);
         });
-control_row(ui, "中国雷达", "中央台雷达图叠加（可与日/台同时开）", "\u{25ce}", |ui| {
+        row_divider(ui);
+        control_row(ui, "本地震源推算", "用测站到时推算震源（紫色叉；非官方预警）", "\u{25ce}", |ui| {
+            draft.ui.show_local_hypo = false;
+            if disabled_toggle(ui) {
+                *hypo_dev_toast_until =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+            }
+        });
+        if hypo_dev_toast_until.is_some_and(|t| t > std::time::Instant::now()) {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space(44.0);
+                ui.label(
+                    RichText::new(t("本功能正处于开发中"))
+                        .size(12.0)
+                        .color(chrome().status_warn),
+                );
+            });
+        } else {
+            *hypo_dev_toast_until = None;
+        }
+    });
+
+    section(ui, "雷达与气象叠加", "\u{25a3}", |ui| {
+        control_row(ui, "中国雷达", "中央台雷达图叠加（可与日/台同时开）", "\u{25ce}", |ui| {
             toggle(ui, &mut draft.sources.map_wx.radar_china);
         });
         row_divider(ui);
@@ -2261,7 +2304,7 @@ control_row(ui, "中国雷达", "中央台雷达图叠加（可与日/台同时�
             toggle(ui, &mut draft.sources.map_wx.radar_taiwan);
         });
         row_divider(ui);
-control_row(ui, "降水预报", "中国降水落区 24 / 48 / 72 小时；关则不拉取", "\u{25ce}", |ui| {
+        control_row(ui, "降水预报", "中国降水落区 24 / 48 / 72 小时；关则不拉取", "\u{25ce}", |ui| {
             let h = draft.sources.map_wx.precip_hours;
             let label = match h {
                 24 => "24 h",
@@ -2279,7 +2322,7 @@ control_row(ui, "降水预报", "中国降水落区 24 / 48 / 72 小时；关则
                     ui.selectable_value(&mut draft.sources.map_wx.precip_hours, 72, "72 h");
                 });
         });
-                row_divider(ui);
+        row_divider(ui);
         control_row(ui, "雷达透明度", "中国 / 日本 / 台湾雷达共用；0 全透，1 不透明", "\u{25ce}", |ui| {
             ui.add(
                 egui::Slider::new(&mut draft.sources.map_wx.radar_opacity, 0.0..=1.0)
@@ -2295,31 +2338,16 @@ control_row(ui, "降水预报", "中国降水落区 24 / 48 / 72 小时；关则
                     .fixed_decimals(2),
             );
         });
-row_divider(ui);
+        row_divider(ui);
         control_row(ui, "台风路径", "活跃台风路径、风圈与预报线", "\u{25ce}", |ui| {
             toggle(ui, &mut draft.ui.show_typhoons);
         });
-        row_divider(ui);
-        control_row(ui, "活动断层", "实验性；默认关；开启后才加载 GEM/CAFD 迹线", "\u{25ce}", |ui| {
-            toggle(ui, &mut draft.ui.show_faults);
-        });
-        if draft.ui.show_faults {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add_space(44.0);
-                ui.label(
-                    RichText::new(t("本功能目前仅为实验性功能，尚未得到完全修复，请谨慎使用"))
-                        .size(12.0)
-                        .color(chrome().status_warn),
-                );
-            });
-        }
         row_divider(ui);
         control_row(ui, "晨昏线", "按本机时间绘制夜侧与晨昏分界", "\u{25ce}", |ui| {
             toggle(ui, &mut draft.ui.show_terminator);
         });
         row_divider(ui);
-        control_row(ui, "台风预报源", "地图预报路径所用机构", "\u{25ce}", |ui| {
+        control_row(ui, "台风预报", "地图预报路径所用机构", "\u{25ce}", |ui| {
             egui::ComboBox::from_id_salt("typhoon_fc_agency")
                 .selected_text(t(&draft.ui.typhoon_forecast_agency))
                 .width(120.0)
@@ -2887,7 +2915,7 @@ fn draw_about(ui: &mut Ui, _draft: &mut AppConfig) {
         );
         ui.label(
             RichText::new(t(
-                "\u{00b7} Jian Project API\n\u{00b7} PancakesAPI\n\u{00b7} Wolfx\n\u{00b7} P2PQuake\n\u{00b7} FSSN",
+                "\u{00b7} Jian Project API\n\u{00b7} PancakesAPI\n\u{00b7} Wolfx\n\u{00b7} P2PQuake",
             ))
             .size(12.0)
             .color(chrome().muted),
