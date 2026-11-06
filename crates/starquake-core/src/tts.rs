@@ -1,4 +1,5 @@
 //! Windows TTS 朗读文案：机构读法 + 预警/速报脚本。
+//! [TODO] JMA exclusive: report as Japanese tts at best
 
 use crate::agency::{agency_family, cea_pr_province, AgencyFamily};
 use crate::{EewReport, EqRecord, IntensityKind};
@@ -19,12 +20,12 @@ pub fn agency_tts_name(agency: &str, is_eew: bool, is_warn: bool) -> String {
         AgencyFamily::CeaPr => "中国预警网省网".into(),
         AgencyFamily::Jma if is_eew => {
             if is_warn {
-                "日本气象厅警报".into()
+                "気象庁緊急地震速報警報".into()
             } else {
-                "日本气象厅预报".into()
+                "気象庁緊急地震速報予報".into()
             }
         }
-        AgencyFamily::Jma => "日本气象厅".into(),
+        AgencyFamily::Jma => "気象庁".into(),
         AgencyFamily::Sa => "美国ShakeAlert预警".into(),
         AgencyFamily::Kma => "韩国气象厅".into(),
         AgencyFamily::Gq => "GlobalQuake预警".into(),
